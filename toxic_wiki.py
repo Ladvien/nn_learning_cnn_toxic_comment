@@ -41,9 +41,9 @@ GLOVE_DIR = os.path.join(BASE_DIR)
 GOOGLE_NEWS_PATH = BASE_DIR + 'GoogleNews-vectors-negative300.bin'
 TRAIN_TEXT_DATA_DIR = BASE_DIR + 'toxic-comment/test.csv'
 TRAIN_TEXT_LABELS_DIR = BASE_DIR + 'toxic-comment/test_labels.csv'
-MAX_SEQUENCE_LENGTH = 1000
+MAX_SEQUENCE_LENGTH = 100
 MAX_NUM_WORDS = 20000
-EMBEDDING_DIM = 1000
+EMBEDDING_DIM = 25
 VALIDATION_SPLIT = 0.2
 
 ##############################
@@ -60,21 +60,30 @@ model = api.load("glove-twitter-25")    # download the model and return as objec
 vocab_size = len(model.vocab)
 embeddings = model.get_keras_embedding()
 
+index2word = model.index2entity
+word2index = {}
+for index in range(vocab_size):
+    word2index[model.index2word[index]] = index
+
+
+############################################
+# Get labels
+############################################
+
+print('Preparing embedding matrix.')
+labels = ["toxic", "severe_toxic", "obscene", "threat", "insult", "identity_hate"]
+with open(TRAIN_TEXT_LABELS_DIR) as f:
+    y = pd.read_csv(TRAIN_TEXT_LABELS_DIR)[labels].values
+    
 ############################################
 # Convert Toxic Comments to Word Vectors
 ############################################
 
 print('Processing text dataset')
 
-
-with open(TRAIN_TEXT_LABELS_DIR) as f:
-    toxic_comment_labels = pd.read_csv(TRAIN_TEXT_LABELS_DIR)    
+with open(TRAIN_TEXT_LABELS_DIR) as f:    
     toxic_comments = pd.read_csv(TRAIN_TEXT_DATA_DIR)
-    toxic_comments = pd.merge(toxic_comments, toxic_comment_labels)
 
-
-num_words = min(MAX_NUM_WORDS, vocab_size) + 1
-embedding_matrix = np.zeros((num_words, EMBEDDING_DIM))    
 comment_vectors = []
 with open(TRAIN_TEXT_DATA_DIR) as f:
     for index, text in enumerate(toxic_comments['comment_text'].tolist()):
@@ -82,69 +91,66 @@ with open(TRAIN_TEXT_DATA_DIR) as f:
         word_vec = []
         for word in words:
             try:
-                word_vec.append(model.word_vec(word))
+                word_vec.append(word2index[word])
             except:
-                pass
+                continue
         comment_vectors.append(word_vec)
 
 print('Found %s comments.' % len(comment_vectors))
 
-del toxic_comment_labels, toxic_comments
 
 ############################################
 # Pad Sequences
 ############################################
 
 data = pad_sequences(comment_vectors, maxlen=MAX_SEQUENCE_LENGTH)
-del comment_vectors
 
-for index, row in enumerate(data):
-    embedding_matrix[index] = np.array(row)
 
 ############################################
-# Get labels
+# Convert Toxic Comment Vectors to Embedding Layer
 ############################################
 
-print('Preparing embedding matrix.')
+#for index, row in enumerate(data):
+#    embedding_matrix[index] = model.get_vector()
 
-# prepare embedding matrix
-
-for word, i in word_index.items():
-    if i > MAX_NUM_WORDS:
-        continue
-    embedding_vector = embeddings_index.get(word)
+embedding_matrix = np.zeros((len(word2index) + 1, EMBEDDING_DIM))
+for word, i in word2index.items():
+    embedding_vector = model.get_vector(word)
     if embedding_vector is not None:
         # words not found in embedding index will be all-zeros.
         embedding_matrix[i] = embedding_vector
 
 # load pre-trained word embeddings into an Embedding layer
 # note that we set trainable = False so as to keep the embeddings fixed
-embedding_layer = Embedding(num_words,
+embedding_layer = Embedding(len(word2index),
                             EMBEDDING_DIM,
                             embeddings_initializer=Constant(embedding_matrix),
                             input_length=MAX_SEQUENCE_LENGTH,
                             trainable=False)
 
+############################################
+# Train
+############################################
+
 print('Training model.')
 
 # train a 1D convnet with global maxpooling
 sequence_input = Input(shape=(MAX_SEQUENCE_LENGTH,), dtype='int32')
-embedded_sequences = embedding_layer(sequence_input)
+embedded_sequences = embeddings(sequence_input)
 x = Conv1D(128, 5, activation='relu')(embedded_sequences)
 x = MaxPooling1D(5)(x)
 x = Conv1D(128, 5, activation='relu')(x)
 x = MaxPooling1D(5)(x)
-x = Conv1D(128, 5, activation='relu')(x)
+x = Conv1D(128, 3, activation='relu')(x)
 x = GlobalMaxPooling1D()(x)
 x = Dense(128, activation='relu')(x)
-preds = Dense(len(labels_index), activation='softmax')(x)
+preds = Dense(len(labels), activation='softmax')(x)
 
 model = Model(sequence_input, preds)
 model.compile(loss='categorical_crossentropy',
               optimizer='rmsprop',
               metrics=['acc'])
 
-model.fit(x_train, y_train,
+model.fit(data, y,
           batch_size=128,
-          epochs=10,
-          validation_data=(x_val, y_val))
+          epochs=10)
