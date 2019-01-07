@@ -15,6 +15,7 @@ Created on Sun Jan  6 17:21:43 2019
 # sudo pip install -U nltk (Natural Language Toolkit)
 # https://www.depends-on-the-definition.com/guide-to-word-vectors-with-gensim-and-keras/
 # https://blog.keras.io/using-pre-trained-word-embeddings-in-a-keras-model.html
+# https://github.com/keras-team/keras/blob/master/examples/pretrained_word_embeddings.py
 from __future__ import print_function
 
 import os
@@ -28,6 +29,8 @@ from keras.layers import Conv1D, MaxPooling1D, Embedding
 from keras.models import Model
 from keras.initializers import Constant
 import gensim.downloader as api
+import gensim
+import pandas as pd
 
 ############################
 # Convenience Macros
@@ -36,30 +39,12 @@ import gensim.downloader as api
 BASE_DIR = '/Users/cthomasbrittain/dl-nlp/data/'
 GLOVE_DIR = os.path.join(BASE_DIR)
 GOOGLE_NEWS_PATH = BASE_DIR + 'GoogleNews-vectors-negative300.bin'
-TEXT_DATA_DIR = os.path.join(BASE_DIR, '20_newsgroup')
+TRAIN_TEXT_DATA_DIR = BASE_DIR + 'toxic-comment/test.csv'
+TRAIN_TEXT_LABELS_DIR = BASE_DIR + 'toxic-comment/test_labels.csv'
 MAX_SEQUENCE_LENGTH = 1000
 MAX_NUM_WORDS = 20000
-EMBEDDING_DIM = 100
+EMBEDDING_DIM = 1000
 VALIDATION_SPLIT = 0.2
-
-
-############################
-# Load GloVe Embeddings
-############################
-## first, build index mapping words in the embeddings set
-## to their embedding vector
-#
-#print('Indexing word vectors.')
-#
-#embeddings_index = {}
-#with open(os.path.join(GLOVE_DIR, 'glove.6B.100d.txt')) as f:
-#    for line in f:
-#        values = line.split()
-#        word = values[0]
-#        coefs = np.asarray(values[1:], dtype='float32')
-#        embeddings_index[word] = coefs
-#
-#print('Found %s word vectors.' % len(embeddings_index))
 
 ##############################
 # Load GoogleNews Embeddings
@@ -68,78 +53,62 @@ VALIDATION_SPLIT = 0.2
 print('Loading word vectors.')
 
 # Load embeddings
-
 model = gensim.models.KeyedVectors.load_word2vec_format(GOOGLE_NEWS_PATH, binary=True)
-info = api.info()                       # show info about available models/datasets
+#info = api.info()                       # show info about available models/datasets
 model = api.load("glove-twitter-25")    # download the model and return as object ready for use
 
+vocab_size = len(model.vocab)
 embeddings = model.get_keras_embedding()
 
-model.word_vec('black')
+############################################
+# Convert Toxic Comments to Word Vectors
+############################################
 
-
-print('Found %s word vectors.' % len(embeddings_index))
-
-
-############################
-# Load GloVe Embeddings
-############################
-# second, prepare text samples and their labels
 print('Processing text dataset')
 
-texts = []  # list of text samples
-labels_index = {}  # dictionary mapping label name to numeric id
-labels = []  # list of label ids
-for name in sorted(os.listdir(TEXT_DATA_DIR)):
-    path = os.path.join(TEXT_DATA_DIR, name)
-    if os.path.isdir(path):
-        label_id = len(labels_index)
-        labels_index[name] = label_id
-        for fname in sorted(os.listdir(path)):
-            if fname.isdigit():
-                fpath = os.path.join(path, fname)
-                args = {} if sys.version_info < (3,) else {'encoding': 'latin-1'}
-                with open(fpath, **args) as f:
-                    t = f.read()
-                    i = t.find('\n\n')  # skip header
-                    if 0 < i:
-                        t = t[i:]
-                    texts.append(t)
-                labels.append(label_id)
 
-print('Found %s texts.' % len(texts))
+with open(TRAIN_TEXT_LABELS_DIR) as f:
+    toxic_comment_labels = pd.read_csv(TRAIN_TEXT_LABELS_DIR)    
+    toxic_comments = pd.read_csv(TRAIN_TEXT_DATA_DIR)
+    toxic_comments = pd.merge(toxic_comments, toxic_comment_labels)
 
-# finally, vectorize the text samples into a 2D integer tensor
-tokenizer = Tokenizer(num_words=MAX_NUM_WORDS)
-tokenizer.fit_on_texts(texts)
-sequences = tokenizer.texts_to_sequences(texts)
 
-word_index = tokenizer.word_index
-print('Found %s unique tokens.' % len(word_index))
+num_words = min(MAX_NUM_WORDS, vocab_size) + 1
+embedding_matrix = np.zeros((num_words, EMBEDDING_DIM))    
+comment_vectors = []
+with open(TRAIN_TEXT_DATA_DIR) as f:
+    for index, text in enumerate(toxic_comments['comment_text'].tolist()):
+        words = text.split()
+        word_vec = []
+        for word in words:
+            try:
+                word_vec.append(model.word_vec(word))
+            except:
+                pass
+        comment_vectors.append(word_vec)
 
-data = pad_sequences(sequences, maxlen=MAX_SEQUENCE_LENGTH)
+print('Found %s comments.' % len(comment_vectors))
 
-labels = to_categorical(np.asarray(labels))
-print('Shape of data tensor:', data.shape)
-print('Shape of label tensor:', labels.shape)
+del toxic_comment_labels, toxic_comments
 
-# split the data into a training set and a validation set
-indices = np.arange(data.shape[0])
-np.random.shuffle(indices)
-data = data[indices]
-labels = labels[indices]
-num_validation_samples = int(VALIDATION_SPLIT * data.shape[0])
+############################################
+# Pad Sequences
+############################################
 
-x_train = data[:-num_validation_samples]
-y_train = labels[:-num_validation_samples]
-x_val = data[-num_validation_samples:]
-y_val = labels[-num_validation_samples:]
+data = pad_sequences(comment_vectors, maxlen=MAX_SEQUENCE_LENGTH)
+del comment_vectors
+
+for index, row in enumerate(data):
+    embedding_matrix[index] = np.array(row)
+
+############################################
+# Get labels
+############################################
 
 print('Preparing embedding matrix.')
 
 # prepare embedding matrix
-num_words = min(MAX_NUM_WORDS, len(word_index)) + 1
-embedding_matrix = np.zeros((num_words, EMBEDDING_DIM))
+
 for word, i in word_index.items():
     if i > MAX_NUM_WORDS:
         continue
