@@ -18,18 +18,13 @@ Created on Sun Jan  6 17:21:43 2019
 # https://github.com/keras-team/keras/blob/master/examples/pretrained_word_embeddings.py
 from __future__ import print_function
 
-import os
-import sys
 import numpy as np
 from keras.preprocessing.text import Tokenizer
 from keras.preprocessing.sequence import pad_sequences
-from keras.utils import to_categorical
-from keras.layers import Dense, Input, GlobalMaxPooling1D
-from keras.layers import Conv1D, MaxPooling1D, Embedding
+from keras.layers import Dense, Input, GlobalMaxPooling1D, Conv1D, Embedding, MaxPooling1D
 from keras.models import Model
 from keras.initializers import Constant
 import gensim.downloader as api
-import gensim
 import pandas as pd
 
 ############################
@@ -41,7 +36,7 @@ TRAIN_TEXT_DATA_DIR = BASE_DIR + 'toxic-comment/train.csv'
 MAX_SEQUENCE_LENGTH = 100
 MAX_NUM_WORDS = 20000
 EMBEDDING_DIM = 25
-VALIDATION_SPLIT = 0.2
+VALIDATION_SPLIT = 0.0
 
 ##############################
 # Load GoogleNews Embeddings
@@ -70,9 +65,9 @@ with open(TRAIN_TEXT_DATA_DIR) as f:
     toxic_comments = pd.read_csv(TRAIN_TEXT_DATA_DIR)
 
 print('Getting Comment Labels.')
-labels = ["toxic", "severe_toxic", "obscene", "threat", "insult", "identity_hate"]
+prediction_labels = ["toxic", "severe_toxic", "obscene", "threat", "insult", "identity_hate"]
 with open(TRAIN_TEXT_DATA_DIR) as f:
-    label = toxic_comments[labels].values
+    labels = toxic_comments[prediction_labels].values
     
 ############################################
 # Convert Toxic Comments to Sequences
@@ -96,26 +91,8 @@ data = pad_sequences(sequences, maxlen=MAX_SEQUENCE_LENGTH)
 
 
 ###################################################
-# Test / Train Split
-###################################################
-indices = np.arange(data.shape[0])
-np.random.shuffle(indices)
-data = data[indices]
-labels = labels[indices]
-nb_validation_samples = int(VALIDATION_SPLIT * data.shape[0])
-
-x_train = data[:-nb_validation_samples]
-y_train = labels[:-nb_validation_samples]
-x_val = data[-nb_validation_samples:]
-y_val = labels[-nb_validation_samples:]
-
-
-###################################################
 # Convert Toxic Comment Vectors to Embedding Layer
 ###################################################
-
-#for index, row in enumerate(data):
-#    embedding_matrix[index] = model.get_vector()
 num_words = min(MAX_NUM_WORDS, len(word_index)) + 1
 embedding_matrix = np.zeros((num_words, EMBEDDING_DIM))
 for word, i in word_index.items():
@@ -127,40 +104,76 @@ for word, i in word_index.items():
     except:
         continue
 
-# load pre-trained word embeddings into an Embedding layer
-# note that we set trainable = False so as to keep the embeddings fixed
+# Load pre-trained word embeddings into an Embedding layer.
+# Note, that we set trainable = False so as to keep the embeddings fixed.
 embedding_layer = Embedding(len(word2index),
                             EMBEDDING_DIM,
                             embeddings_initializer=Constant(embedding_matrix),
                             input_length=MAX_SEQUENCE_LENGTH,
                             trainable=False)
 
+###################################################
+# Test / Train Split
+###################################################
+nb_validation_samples = int(VALIDATION_SPLIT * data.shape[0])
+x_train = data[:-nb_validation_samples]
+y_train = labels[:-nb_validation_samples]
+x_val = data[-nb_validation_samples:]
+y_val = labels[-nb_validation_samples:]
+
+
 ############################################
 # Train
 ############################################
 
-print('Training model.')
-
-
 print('Building model...')
-
 sequence_input = Input(shape=(MAX_SEQUENCE_LENGTH,), dtype='int32')
 embedded_sequences = embedding_layer(sequence_input)
-x = Conv1D(128, 5, activation='relu')(embedded_sequences)
-x = MaxPooling1D(5)(x)
-x = Conv1D(128, 5, activation='relu')(x)
-x = MaxPooling1D(5)(x)
-x = Conv1D(128, 5, activation='relu')(x)
-x = MaxPooling1D(35)(x)  # global max pooling
-x = Flatten()(x)
+x = Conv1D(128, 3, activation='relu')(embedded_sequences)
+x = MaxPooling1D(3)(x)
+x = Conv1D(128, 3, activation='relu')(x)
+x = MaxPooling1D(3)(x)
+x = Conv1D(128, 3, activation='relu')(x)
+x = MaxPooling1D(3)(x)  # global max pooling
+x = GlobalMaxPooling1D()(x)
 x = Dense(128, activation='relu')(x)
-preds = Dense(len(labels_index), activation='softmax')(x)
+preds = Dense(y_train.shape[1], activation='softmax')(x)
 
 model = Model(sequence_input, preds)
 model.compile(loss='categorical_crossentropy',
               optimizer='rmsprop',
               metrics=['acc'])
 
+
+print('Training model.')
 # happy learning!
-model.fit(x_train, y_train, validation_data=(x_val, y_val),
+history = model.fit(x_train, y_train, validation_data=(x_val, y_val),
           epochs=2, batch_size=128)
+
+
+############################################
+# Predict
+############################################
+
+def prepare_sample(sequence, tokenizer, max_length):
+    sequence = tokenizer.texts_to_sequences(sequence)
+    data = pad_sequences(sequence, maxlen=max_length)
+    return data
+
+
+# Create a test sequence
+sequence = [("""
+                COCKSUCKER BEFORE YOU PISS AROUND ON MY WORK
+        """)]
+
+# Convert the sequence to tokens and pad it.
+sequence = prepare_sample(sequence, tokenizer, MAX_SEQUENCE_LENGTH)
+
+# Make a prediction
+sequence_prediction = model.predict(sequence, batch_size=None, verbose=1, steps=None)
+
+# Take only the first of the batch of predictions
+sequence_prediction = pd.DataFrame(sequence_prediction[0:1,:])
+
+# Label the predictions
+sequence_prediction.columns = prediction_labels
