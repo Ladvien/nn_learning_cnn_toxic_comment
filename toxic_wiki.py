@@ -16,6 +16,7 @@ Created on Sun Jan  6 17:21:43 2019
 # https://www.depends-on-the-definition.com/guide-to-word-vectors-with-gensim-and-keras/
 # https://blog.keras.io/using-pre-trained-word-embeddings-in-a-keras-model.html
 # https://github.com/keras-team/keras/blob/master/examples/pretrained_word_embeddings.py
+# https://www.kaggle.com/vbookshelf/keras-cnn-glove-early-stopping-0-048-lb
 from __future__ import print_function
 
 import numpy as np
@@ -26,6 +27,7 @@ from keras.models import Model
 from keras.initializers import Constant
 import gensim.downloader as api
 import pandas as pd
+import matplotlib.pyplot as plt
 
 ############################
 # Convenience Macros
@@ -36,7 +38,7 @@ TRAIN_TEXT_DATA_DIR = BASE_DIR + 'toxic-comment/train.csv'
 MAX_SEQUENCE_LENGTH = 100
 MAX_NUM_WORDS = 20000
 EMBEDDING_DIM = 25
-VALIDATION_SPLIT = 0.0
+VALIDATION_SPLIT = 0.2
 
 ##############################
 # Load GoogleNews Embeddings
@@ -46,15 +48,15 @@ print('Loading word vectors.')
 
 # Load embeddings
 info = api.info()                       # show info about available models/datasets
-model = api.load("glove-twitter-25")    # download the model and return as object ready for use
+embedding_model = api.load("glove-twitter-25")    # download the model and return as object ready for use
 
-vocab_size = len(model.vocab)
-embeddings = model.get_keras_embedding()
+vocab_size = len(embedding_model.vocab)
+embeddings = embedding_model.get_keras_embedding()
 
-index2word = model.index2entity
-word2index = {}
+index2word = embedding_model.index2entity
+word2idx = {}
 for index in range(vocab_size):
-    word2index[model.index2word[index]] = index
+    word2idx[embedding_model.index2word[index]] = index
 
 
 ############################################
@@ -78,7 +80,7 @@ print('Processing text dataset')
 tokenizer = Tokenizer(num_words=MAX_NUM_WORDS)
 tokenizer.fit_on_texts(toxic_comments['comment_text'].fillna("DUMMY_VALUE").values)
 sequences = tokenizer.texts_to_sequences(toxic_comments['comment_text'].fillna("DUMMY_VALUE").values)
-
+tkn = tokenizer
 word_index = tokenizer.word_index
 
 print('Found %s sequences.' % len(sequences))
@@ -97,16 +99,17 @@ num_words = min(MAX_NUM_WORDS, len(word_index)) + 1
 embedding_matrix = np.zeros((num_words, EMBEDDING_DIM))
 for word, i in word_index.items():
     try:
-        embedding_vector = model.get_vector(word)
+        embedding_vector = embedding_model.get_vector(word)
         if embedding_vector is not None:
             # words not found in embedding index will be all-zeros.
+            print(embedding_vector)
             embedding_matrix[i] = embedding_vector
     except:
         continue
 
 # Load pre-trained word embeddings into an Embedding layer.
 # Note, that we set trainable = False so as to keep the embeddings fixed.
-embedding_layer = Embedding(len(word2index),
+embedding_layer = Embedding(len(word2idx),
                             EMBEDDING_DIM,
                             embeddings_initializer=Constant(embedding_matrix),
                             input_length=MAX_SEQUENCE_LENGTH,
@@ -134,21 +137,50 @@ x = MaxPooling1D(3)(x)
 x = Conv1D(128, 3, activation='relu')(x)
 x = MaxPooling1D(3)(x)
 x = Conv1D(128, 3, activation='relu')(x)
-x = MaxPooling1D(3)(x)  # global max pooling
 x = GlobalMaxPooling1D()(x)
 x = Dense(128, activation='relu')(x)
-preds = Dense(y_train.shape[1], activation='softmax')(x)
+preds = Dense(y_train.shape[1], activation='sigmoid')(x)
 
 model = Model(sequence_input, preds)
-model.compile(loss='categorical_crossentropy',
+model.compile(loss='binary_crossentropy',
               optimizer='rmsprop',
               metrics=['acc'])
 
 
 print('Training model.')
 # happy learning!
-history = model.fit(x_train, y_train, validation_data=(x_val, y_val),
-          epochs=2, batch_size=128)
+history = model.fit(x_train, y_train,
+          epochs=4, batch_size=128)
+
+
+#
+## train a 1D convnet with global maxpooling
+#input_ = Input(shape=(MAX_SEQUENCE_LENGTH,))
+#x = embedding_layer(input_)
+#x = Conv1D(128, 3, activation='relu')(x)
+#x = MaxPooling1D(3)(x)
+#x = Conv1D(128, 3, activation='relu')(x)
+#x = MaxPooling1D(3)(x)
+#x = Conv1D(128, 3, activation='relu')(x)
+#x = GlobalMaxPooling1D()(x)
+#x = Dense(128, activation='relu')(x)
+#output = Dense(len(prediction_labels), activation='sigmoid')(x)
+#
+#model = Model(input_, output)
+#model.compile(
+#  loss='binary_crossentropy',
+#  optimizer='rmsprop',
+#  metrics=['accuracy']
+#)
+#
+#print('Training model...')
+#r = model.fit(
+#  data,
+#  labels,
+#  batch_size=128,
+#  epochs=2,
+#  validation_split=VALIDATION_SPLIT
+#)
 
 
 ############################################
@@ -156,24 +188,28 @@ history = model.fit(x_train, y_train, validation_data=(x_val, y_val),
 ############################################
 
 def prepare_sample(sequence, tokenizer, max_length):
-    sequence = tokenizer.texts_to_sequences(sequence)
+    sequence = tkn.texts_to_sequences(sequence)
     data = pad_sequences(sequence, maxlen=max_length)
     return data
 
-
 # Create a test sequence
-sequence = [("""
-                COCKSUCKER BEFORE YOU PISS AROUND ON MY WORK
-        """)]
+sequence = ["""
+                You'll need to put something bad here, I'm too prudish.
+            """]
 
 # Convert the sequence to tokens and pad it.
 sequence = prepare_sample(sequence, tokenizer, MAX_SEQUENCE_LENGTH)
 
 # Make a prediction
-sequence_prediction = model.predict(sequence, batch_size=None, verbose=1, steps=None)
+sequence_prediction = model.predict(sequence, verbose=1)
 
 # Take only the first of the batch of predictions
-sequence_prediction = pd.DataFrame(sequence_prediction[0:1,:])
+sequence_prediction = pd.DataFrame(sequence_prediction)
 
 # Label the predictions
 sequence_prediction.columns = prediction_labels
+
+# plot some data
+plt.plot(history.history['acc'], label='acc')
+plt.legend()
+plt.show()
