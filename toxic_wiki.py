@@ -28,16 +28,17 @@ from keras.initializers import Constant
 import gensim.downloader as api
 import pandas as pd
 import matplotlib.pyplot as plt
+from sklearn.metrics import roc_auc_score
 
 ############################
 # Convenience Macros
 ############################
 
-BASE_DIR = '/Users/cthomasbrittain/dl-nlp/data/'
-TRAIN_TEXT_DATA_DIR = BASE_DIR + 'toxic-comment/train.csv'
+BASE_DIR = '/home/ladvien/nn_learning_cnn_toxic_comment/data/'
+TRAIN_TEXT_DATA_DIR = BASE_DIR + '/train.csv'
 MAX_SEQUENCE_LENGTH = 100
 MAX_NUM_WORDS = 20000
-EMBEDDING_DIM = 25
+EMBEDDING_DIM = 300
 VALIDATION_SPLIT = 0.2
 
 ##############################
@@ -48,7 +49,7 @@ print('Loading word vectors.')
 
 # Load embeddings
 info = api.info()                       # show info about available models/datasets
-embedding_model = api.load("glove-twitter-25")    # download the model and return as object ready for use
+embedding_model = api.load("glove-wiki-gigaword-300")    # download the model and return as object ready for use
 
 vocab_size = len(embedding_model.vocab)
 embeddings = embedding_model.get_keras_embedding()
@@ -80,7 +81,6 @@ print('Processing text dataset')
 tokenizer = Tokenizer(num_words=MAX_NUM_WORDS)
 tokenizer.fit_on_texts(toxic_comments['comment_text'].fillna("DUMMY_VALUE").values)
 sequences = tokenizer.texts_to_sequences(toxic_comments['comment_text'].fillna("DUMMY_VALUE").values)
-tkn = tokenizer
 word_index = tokenizer.word_index
 
 print('Found %s sequences.' % len(sequences))
@@ -102,7 +102,6 @@ for word, i in word_index.items():
         embedding_vector = embedding_model.get_vector(word)
         if embedding_vector is not None:
             # words not found in embedding index will be all-zeros.
-            print(embedding_vector)
             embedding_matrix[i] = embedding_vector
     except:
         continue
@@ -129,19 +128,18 @@ y_val = labels[-nb_validation_samples:]
 # Train
 ############################################
 
-print('Building model...')
-sequence_input = Input(shape=(MAX_SEQUENCE_LENGTH,), dtype='int32')
-embedded_sequences = embedding_layer(sequence_input)
-x = Conv1D(128, 3, activation='relu')(embedded_sequences)
-x = MaxPooling1D(3)(x)
-x = Conv1D(128, 3, activation='relu')(x)
-x = MaxPooling1D(3)(x)
+# train a 1D convnet with global maxpooling
+input_ = Input(shape=(MAX_SEQUENCE_LENGTH,))
+x = embedding_layer(input_)
+x = Conv1D(128, 5, activation='relu')(x)
+x = MaxPooling1D(5)(x)
+x = Conv1D(128, 5, activation='relu')(x)
+x = MaxPooling1D(5)(x)
 x = Conv1D(128, 3, activation='relu')(x)
 x = GlobalMaxPooling1D()(x)
 x = Dense(128, activation='relu')(x)
-preds = Dense(y_train.shape[1], activation='sigmoid')(x)
-
-model = Model(sequence_input, preds)
+output = Dense(len(prediction_labels), activation='sigmoid')(x)
+model = Model(input_, output)
 model.compile(loss='binary_crossentropy',
               optimizer='rmsprop',
               metrics=['acc'])
@@ -149,67 +147,42 @@ model.compile(loss='binary_crossentropy',
 
 print('Training model.')
 # happy learning!
-history = model.fit(x_train, y_train,
-          epochs=4, batch_size=128)
-
-
-#
-## train a 1D convnet with global maxpooling
-#input_ = Input(shape=(MAX_SEQUENCE_LENGTH,))
-#x = embedding_layer(input_)
-#x = Conv1D(128, 3, activation='relu')(x)
-#x = MaxPooling1D(3)(x)
-#x = Conv1D(128, 3, activation='relu')(x)
-#x = MaxPooling1D(3)(x)
-#x = Conv1D(128, 3, activation='relu')(x)
-#x = GlobalMaxPooling1D()(x)
-#x = Dense(128, activation='relu')(x)
-#output = Dense(len(prediction_labels), activation='sigmoid')(x)
-#
-#model = Model(input_, output)
-#model.compile(
-#  loss='binary_crossentropy',
-#  optimizer='rmsprop',
-#  metrics=['accuracy']
-#)
-#
-#print('Training model...')
-#r = model.fit(
-#  data,
-#  labels,
-#  batch_size=128,
-#  epochs=2,
-#  validation_split=VALIDATION_SPLIT
-#)
-
+history = model.fit(x_train, y_train, epochs=15, batch_size=2500, validation_data=(x_val, y_val))
 
 ############################################
 # Predict
 ############################################
 
-def prepare_sample(sequence, tokenizer, max_length):
-    sequence = tkn.texts_to_sequences(sequence)
-    data = pad_sequences(sequence, maxlen=max_length)
-    return data
+def create_prediction(model, sequence, tokenizer, max_length, prediction_labels):
+    # Convert the sequence to tokens and pad it.
+    sequence = tokenizer.texts_to_sequences(sequence)
+    sequence = pad_sequences(sequence, maxlen=max_length)
+    
+    # Make a prediction
+    sequence_prediction = model.predict(sequence, verbose=1)
+    
+    # Take only the first of the batch of predictions
+    sequence_prediction = pd.DataFrame(sequence_prediction).round(0)
+    
+    # Label the predictions
+    sequence_prediction.columns = prediction_labels
+    return sequence_prediction
 
 # Create a test sequence
 sequence = ["""
-                You'll need to put something bad here, I'm too prudish.
+            You're a fucking asshole! Eat shit and die!!
             """]
+prediction = create_prediction(model, sequence, tokenizer, MAX_SEQUENCE_LENGTH, prediction_labels)
 
-# Convert the sequence to tokens and pad it.
-sequence = prepare_sample(sequence, tokenizer, MAX_SEQUENCE_LENGTH)
-
-# Make a prediction
-sequence_prediction = model.predict(sequence, verbose=1)
-
-# Take only the first of the batch of predictions
-sequence_prediction = pd.DataFrame(sequence_prediction)
-
-# Label the predictions
-sequence_prediction.columns = prediction_labels
+# plot the mean AUC over each label
+p = model.predict(x_val)
+aucs = []
+for j in range(1):
+    auc = roc_auc_score(y_val[:,j], p[:,j])
+    aucs.append(auc)
+print(np.mean(aucs))
 
 # plot some data
-plt.plot(history.history['acc'], label='acc')
-plt.legend()
-plt.show()
+#plt.plot(history.history['acc'], label='acc')
+#plt.legend()
+#plt.show()
