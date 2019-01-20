@@ -34,8 +34,8 @@ from sklearn.metrics import roc_auc_score
 # Convenience Macros
 ############################
 
-BASE_DIR = '/home/ladvien/nn_learning_cnn_toxic_comment/data/'
-TRAIN_TEXT_DATA_DIR = BASE_DIR + '/train.csv'
+BASE_DIR = '/Users/cthomasbrittain/dl-nlp/data/'
+TRAIN_TEXT_DATA_DIR = BASE_DIR + 'train.csv'
 MAX_SEQUENCE_LENGTH = 100
 MAX_NUM_WORDS = 20000
 EMBEDDING_DIM = 300
@@ -52,26 +52,25 @@ info = api.info()                       # show info about available models/datas
 embedding_model = api.load("glove-wiki-gigaword-300")    # download the model and return as object ready for use
 
 vocab_size = len(embedding_model.vocab)
-embeddings = embedding_model.get_keras_embedding()
 
-index2word = embedding_model.index2entity
+index2word = embedding_model.index2word
 word2idx = {}
 for index in range(vocab_size):
     word2idx[embedding_model.index2word[index]] = index
 
-
+test = embedding_model.index2word
 ############################################
 # Get labels
 ############################################
-    
+
+print('Loading Toxic Comments data.')
 with open(TRAIN_TEXT_DATA_DIR) as f:
     toxic_comments = pd.read_csv(TRAIN_TEXT_DATA_DIR)
 
 print('Getting Comment Labels.')
 prediction_labels = ["toxic", "severe_toxic", "obscene", "threat", "insult", "identity_hate"]
-with open(TRAIN_TEXT_DATA_DIR) as f:
-    labels = toxic_comments[prediction_labels].values
-    
+labels = toxic_comments[prediction_labels].values
+
 ############################################
 # Convert Toxic Comments to Sequences
 ############################################
@@ -147,7 +146,7 @@ model.compile(loss='binary_crossentropy',
 
 print('Training model.')
 # happy learning!
-history = model.fit(x_train, y_train, epochs=15, batch_size=2500, validation_data=(x_val, y_val))
+history = model.fit(x_train, y_train, epochs=2, batch_size=512, validation_data=(x_val, y_val))
 
 ############################################
 # Predict
@@ -170,7 +169,7 @@ def create_prediction(model, sequence, tokenizer, max_length, prediction_labels)
 
 # Create a test sequence
 sequence = ["""
-            You're a fucking asshole! Eat shit and die!!
+             Type out a nasty test sequence here.
             """]
 prediction = create_prediction(model, sequence, tokenizer, MAX_SEQUENCE_LENGTH, prediction_labels)
 
@@ -183,6 +182,6 @@ for j in range(1):
 print(np.mean(aucs))
 
 # plot some data
-#plt.plot(history.history['acc'], label='acc')
-#plt.legend()
-#plt.show()
+plt.plot(history.history['acc'], label='acc')
+plt.legend()
+plt.show()
